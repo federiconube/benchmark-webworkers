@@ -1,7 +1,7 @@
 // chart.js is manually included in index.html
 declare class Chart {
     constructor(a: any, b: any);
-    destroy() : void;
+    destroy(): void;
 }
 
 function addToConsole(txt: string) {
@@ -30,7 +30,7 @@ async function runLatencyTest(numberOfWorkers: number, iterations: number): Prom
         const workers: Worker[] = [];
 
         for (let i = 0; i < numberOfWorkers; i++) {
-            const worker = new Worker("dist/latency.js");
+            const worker = new Worker("dist/workers/latency.js");
 
             workers.push(worker);
 
@@ -77,6 +77,98 @@ async function runLatencyTest(numberOfWorkers: number, iterations: number): Prom
     });
 }
 
+interface SameFrameResult {
+    messagesInSameFrame: number;
+    messagesNotInSameFrame: number;
+}
+
+async function runSameFrameCommunicationTest(numberOfWorkers: number, iterations: number): Promise<SameFrameResult> {
+
+    return new Promise(resolve => {
+
+        const workers: Worker[] = [];
+
+        var currentFrame = 0;
+        var running = true;
+        var totalFrames = 1;
+        var frameRate = 0;
+
+        function onNewFrame() {
+            if (!running) return;
+            currentFrame++;
+            frameRate++;
+            totalFrames++;
+            requestAnimationFrame(onNewFrame);
+        }
+
+        requestAnimationFrame(onNewFrame);
+
+        var messagesInSameFrame = 0;
+        var messagesNotInSameFrame = 0;
+
+        for (let i = 0; i < numberOfWorkers; i++) {
+            const worker = new Worker("dist/workers/same-frame.js");
+
+            workers.push(worker);
+
+            worker.onmessage = (e) => {
+
+                if (e.data.command == "PONG") {
+                    if (e.data.frame === currentFrame) {
+                        messagesInSameFrame++;
+                    } else {
+                        messagesNotInSameFrame++;
+                    }
+                    worker.postMessage({
+                        command: "PING",
+                        frame: currentFrame,
+                    });
+                }
+            }
+
+            worker.postMessage({
+                command: "PING",
+                frame: currentFrame
+            });
+        }
+
+        var time = performance.now();
+
+        var measuresments = 0;
+        var frameRates: number[] = [];
+
+
+        const reportTimer = setInterval(async () => {
+            var deltaTime = (performance.now() - time) / 1000;
+            time = performance.now();
+
+            measuresments++;
+
+            frameRates.push(frameRate / deltaTime);
+            frameRate = 0;
+
+            if (measuresments == iterations + 1) {
+                running = false;
+                clearInterval(reportTimer);
+                frameRates.splice(0, 1);
+
+                messagesInSameFrame = Math.floor(messagesInSameFrame / numberOfWorkers / totalFrames);
+                messagesNotInSameFrame = Math.ceil(messagesNotInSameFrame / numberOfWorkers / totalFrames);
+                const frameRate = Math.round(frameRates.reduce((p, c) => p + c, 0) / frameRates.length);
+
+                addToConsole(`Average messages in same frame per worker with ${numberOfWorkers} workers is ${messagesInSameFrame}, not in same frame: ${messagesNotInSameFrame}, frame rate: ${frameRate}fps`)
+                for (var i = 0; i < workers.length; i++) {
+                    workers[i]?.terminate();
+                }
+                await waitSeconds(0.5);
+                resolve({ messagesInSameFrame, messagesNotInSameFrame });
+            }
+        }, 1000);
+    });
+}
+
+var chart: Chart | null = null;
+
 async function start() {
 
     const fromWorkers = Number.parseInt((document.getElementById("fromWorkers") as HTMLInputElement).value);
@@ -86,24 +178,30 @@ async function start() {
     addToConsole(`RUNNING TESTS FROM ${fromWorkers} to ${toWorkers} with a step of ${step} [BE PATIENT]`)
 
     const latencies: LatencyResult[] = [];
+    const sameFrameMessages: SameFrameResult[] = [];
     const numberOfWorkers: number[] = [];
-    var chart = drawGraph(latencies, numberOfWorkers);
+
+    if (!chart)
+        chart = drawGraph(numberOfWorkers, latencies, sameFrameMessages);
 
     for (var i = fromWorkers; i <= toWorkers; i += step) {
-        const average = await runLatencyTest(i, 4);
-
         numberOfWorkers.push(i);
-        latencies.push(average);
+
+        const latency = await runLatencyTest(i, 4);
+        latencies.push(latency);
+
+        const sameFrame = await runSameFrameCommunicationTest(i, 4);
+        sameFrameMessages.push(sameFrame);
 
         if (chart) chart.destroy();
 
-        chart = drawGraph(latencies, numberOfWorkers);
+        chart = drawGraph(numberOfWorkers, latencies, sameFrameMessages);
 
         await waitSeconds(0.5);
     }
 }
 
-function drawGraph(latencies: LatencyResult[], numberOfWorkers: number[]) {
+function drawGraph(numberOfWorkers: number[], latencies: LatencyResult[], sameFrameMessages: SameFrameResult[]) {
 
     const ctx = document.getElementById('myChart') as HTMLCanvasElement;
 
@@ -118,8 +216,13 @@ function drawGraph(latencies: LatencyResult[], numberOfWorkers: number[]) {
                 yAxisID: 'y'
             },
             {
-                label: 'Single Worker Messages',
-                data: latencies.map(x => x.messages),
+                label: 'Same Frame Messages',
+                data: sameFrameMessages.map(x => x.messagesInSameFrame),
+                yAxisID: 'y1'
+            },
+            {
+                label: 'Not Same Frame Messages',
+                data: sameFrameMessages.map(x => x.messagesNotInSameFrame),
                 yAxisID: 'y1'
             }
         ]
@@ -131,6 +234,7 @@ function drawGraph(latencies: LatencyResult[], numberOfWorkers: number[]) {
         options: {
             animation: false,
             responsive: true,
+            aspectRatio: window.innerHeight > window.innerWidth ? 1 : 3,
             interaction: {
                 mode: 'index',
                 intersect: false,
@@ -169,3 +273,5 @@ function drawGraph(latencies: LatencyResult[], numberOfWorkers: number[]) {
 }
 
 (document.getElementById("start") as HTMLButtonElement).addEventListener("click", () => start());
+
+(document.getElementById("device") as HTMLTextAreaElement).value = navigator.userAgent;
