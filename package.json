@@ -1,11 +1,10 @@
 {
-  "type": "module",
   "dependencies": {
     "http-server": "^14.1.1",
     "typescript": "^5.5.4"
   },
   "scripts": {
-    "dev": "http-server -c-1",
+    "serve": "npm i && npm run compile && http-server -c-1",
     "compile": "tsc",
     "watch": "tsc --watch"
   }
