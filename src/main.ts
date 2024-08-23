@@ -1,25 +1,36 @@
+// chart.js is manually included in index.html
+declare class Chart {
+    constructor(a: any, b: any);
+    destroy() : void;
+}
 
-
-function addToConsole(txt) {
-    const ta = document.getElementById("console");
+function addToConsole(txt: string) {
+    const ta = document.getElementById("console") as HTMLTextAreaElement;
+    if (!ta) return;
     ta.value += txt + "\n";
     ta.scrollTop = ta.scrollHeight;
 }
 
-async function waitSeconds(seconds) {
+async function waitSeconds(seconds: number) {
     return new Promise(r => setTimeout(r, seconds * 1000));
 }
 
-async function runLatencyTest(numberOfWorkers, iterations) {
+interface LatencyResult {
+    average: number;
+    messages: number;
+}
+
+
+async function runLatencyTest(numberOfWorkers: number, iterations: number): Promise<LatencyResult> {
 
     return new Promise(resolve => {
 
         //addToConsole("RUNNING LATENCY TESTS WITH " + numberOfWorkers + " WORKER(S)")
 
-        const workers = [];
+        const workers: Worker[] = [];
 
         for (let i = 0; i < numberOfWorkers; i++) {
-            const worker = new Worker("latency.js");
+            const worker = new Worker("dist/latency.js");
 
             workers.push(worker);
 
@@ -35,7 +46,7 @@ async function runLatencyTest(numberOfWorkers, iterations) {
 
         var time = performance.now();
 
-        const latencies = [];
+        const latencies: number[] = [];
         var totalMessages = 0;
 
         const reportTimer = setInterval(async () => {
@@ -57,10 +68,10 @@ async function runLatencyTest(numberOfWorkers, iterations) {
                 const averageLatency = latencies.reduce((p, c) => p + c, 0) / latencies.length;
                 addToConsole(`Average latency with ${numberOfWorkers} workers is ${averageLatency}ms, total messages per worker is: ${totalPerSecondPerWorker}`)
                 for (var i = 0; i < workers.length; i++) {
-                    workers[i].terminate();
+                    workers[i]?.terminate();
                 }
                 await waitSeconds(0.5);
-                resolve({ average: averageLatency, messages: totalPerSecondPerWorker} );
+                resolve({ average: averageLatency, messages: totalPerSecondPerWorker });
             }
         }, 1000);
     });
@@ -68,14 +79,14 @@ async function runLatencyTest(numberOfWorkers, iterations) {
 
 async function start() {
 
-    const fromWorkers = Number.parseInt(document.getElementById("fromWorkers").value);
-    const toWorkers = Number.parseInt(document.getElementById("toWorkers").value);
-    const step = Number.parseInt(document.getElementById("stepWorkers").value);
+    const fromWorkers = Number.parseInt((document.getElementById("fromWorkers") as HTMLInputElement).value);
+    const toWorkers = Number.parseInt((document.getElementById("toWorkers") as HTMLInputElement).value);
+    const step = Number.parseInt((document.getElementById("stepWorkers") as HTMLInputElement).value);
 
     addToConsole(`RUNNING TESTS FROM ${fromWorkers} to ${toWorkers} with a step of ${step} [BE PATIENT]`)
 
-    const latencies = [];
-    const numberOfWorkers = [];
+    const latencies: LatencyResult[] = [];
+    const numberOfWorkers: number[] = [];
     var chart = drawGraph(latencies, numberOfWorkers);
 
     for (var i = fromWorkers; i <= toWorkers; i += step) {
@@ -92,9 +103,9 @@ async function start() {
     }
 }
 
-function drawGraph(latencies, numberOfWorkers) {
+function drawGraph(latencies: LatencyResult[], numberOfWorkers: number[]) {
 
-    const ctx = document.getElementById('myChart');
+    const ctx = document.getElementById('myChart') as HTMLCanvasElement;
 
     const labels = numberOfWorkers;
 
@@ -133,7 +144,6 @@ function drawGraph(latencies, numberOfWorkers) {
                     text: 'Webworkers communication latency in milliseconds vs number of web workers'
                 }
             },
-            stacked: false,
             scales: {
                 y: {
                     type: 'linear',
@@ -158,4 +168,4 @@ function drawGraph(latencies, numberOfWorkers) {
     return new Chart(ctx, chartConfiguration);
 }
 
-document.getElementById("start").addEventListener("click", () => start());
+(document.getElementById("start") as HTMLButtonElement).addEventListener("click", () => start());
