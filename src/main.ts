@@ -167,6 +167,88 @@ async function runSameFrameCommunicationTest(numberOfWorkers: number, iterations
     });
 }
 
+interface ReadyTimesResult {
+    js: number;
+    blob: number;
+}
+
+async function runReadyTimesTest(numberOfWorkers: number, iterations: number): Promise<ReadyTimesResult> {
+
+    return new Promise(async (resolve) => {
+
+        var readyTimes: ReadyTimesResult[] = [];
+
+        const jsFileURL = "dist/workers/app1-800kbs.js";
+
+        for (var it = 0; it < iterations; it++) {
+
+            // Perform 2 tests, one with JS and one with BLOB
+            var testTimes: number[] = [];
+
+            for (var test = 0; test < 2; test++) {
+
+                const workers: Worker[] = [];
+                const startTime = performance.now();
+                var workersReady: number = 0;
+                var done = false;
+
+                function addWorker(worker: Worker) {
+                    workers.push(worker);
+
+                    worker.onmessage = (e) => {
+                        if (e.data == "READY") {
+                            workersReady++;
+                            if (workersReady === numberOfWorkers) {
+                                var endTime = performance.now();
+                                testTimes.push(endTime - startTime);
+                                done = true;
+                            }
+                        }
+                    }
+                }
+
+                for (let i = 0; i < numberOfWorkers; i++) {
+
+                    if (test === 0) {
+                        // JS
+                        addWorker(new Worker(jsFileURL));
+                    } else {
+                        // BLOB
+                        fetch(jsFileURL)
+                            .then(x => x.blob())
+                            .then(blob => addWorker(new Worker(URL.createObjectURL(blob))));
+                    }
+                }
+
+                // Wait for workers to finish running
+                while(!done) {
+                    await waitSeconds(0.25);
+                }
+
+                // Stop workers
+                for (var i = 0; i < workers.length; i++) {
+                    workers[i]?.terminate();
+                }
+
+                await waitSeconds(0.5);
+            }
+
+            if (testTimes.length == 1) {
+                testTimes.push(0);
+            }
+
+            readyTimes.push({ js: testTimes[0], blob: testTimes[1] });
+        }
+
+        const readyTimesJs = Math.round(readyTimes.map(x => x.js).reduce((p, c) => p + c, 0) / readyTimes.length);
+        const readyTimesBlob = Math.round(readyTimes.map(x => x.blob).reduce((p, c) => p + c, 0) / readyTimes.length);
+
+        addToConsole(`Average webworkers initialization for ${numberOfWorkers} workers is ${readyTimesJs}ms for JS, ${readyTimesBlob}ms for BLOB`)
+        resolve({ js:readyTimesJs, blob:readyTimesBlob });
+
+    });
+}
+
 var chart: Chart | null = null;
 
 async function start() {
@@ -177,31 +259,86 @@ async function start() {
 
     addToConsole(`RUNNING TESTS FROM ${fromWorkers} to ${toWorkers} with a step of ${step} [BE PATIENT]`)
 
-    const latencies: LatencyResult[] = [];
-    const sameFrameMessages: SameFrameResult[] = [];
+    //const latencies: LatencyResult[] = [];
+    //const sameFrameMessages: SameFrameResult[] = [];
     const numberOfWorkers: number[] = [];
+    const readyTimes: ReadyTimesResult[] = [];
 
-    if (!chart)
-        chart = drawGraph(numberOfWorkers, latencies, sameFrameMessages);
+    if (!chart) {
+        //chart = drawLatencyGraph(numberOfWorkers, latencies, sameFrameMessages);
+        chart = drawReadyTimes(numberOfWorkers, readyTimes)
+    }
 
     for (var i = fromWorkers; i <= toWorkers; i += step) {
         numberOfWorkers.push(i);
 
-        const latency = await runLatencyTest(i, 4);
-        latencies.push(latency);
+        //const latency = await runLatencyTest(i, 4);
+        //latencies.push(latency);
 
-        const sameFrame = await runSameFrameCommunicationTest(i, 4);
-        sameFrameMessages.push(sameFrame);
+        //const sameFrame = await runSameFrameCommunicationTest(i, 4);
+        //sameFrameMessages.push(sameFrame);
+
+        const readyTime = await runReadyTimesTest(i, 4);
+        readyTimes.push(readyTime);
 
         if (chart) chart.destroy();
 
-        chart = drawGraph(numberOfWorkers, latencies, sameFrameMessages);
+        //chart = drawLatencyGraph(numberOfWorkers, latencies, sameFrameMessages);
+        chart = drawReadyTimes(numberOfWorkers, readyTimes);
 
         await waitSeconds(0.5);
     }
 }
 
-function drawGraph(numberOfWorkers: number[], latencies: LatencyResult[], sameFrameMessages: SameFrameResult[]) {
+
+function drawReadyTimes(numberOfWorkers: number[], readyTimes: ReadyTimesResult[]) {
+
+    const ctx = document.getElementById('myChart') as HTMLCanvasElement;
+
+    const labels = numberOfWorkers;
+
+    const data = {
+        labels: labels,
+        datasets: [
+            {
+                label: 'Ready Time JS',
+                data: readyTimes.map(x => x.js),
+            },
+            {
+                label: 'Ready Time BLOB',
+                data: readyTimes.map(x => x.blob),
+            }
+        ]
+    };
+
+    const chartConfiguration = {
+        type: 'line',
+        data: data,
+        options: {
+            animation: false,
+            responsive: true,
+            aspectRatio: window.innerHeight > window.innerWidth ? 1 : 3,
+            interaction: {
+                mode: 'index',
+                intersect: false,
+            },
+            plugins: {
+                legend: {
+                    position: 'top',
+                },
+                title: {
+                    display: true,
+                    text: 'Webworkers initialization time in milliseconds vs number of web workers (800kb JS file)'
+                }
+            }
+        },
+    };
+
+
+    return new Chart(ctx, chartConfiguration);
+}
+
+function drawLatencyGraph(numberOfWorkers: number[], latencies: LatencyResult[], sameFrameMessages: SameFrameResult[]) {
 
     const ctx = document.getElementById('myChart') as HTMLCanvasElement;
 
@@ -224,7 +361,7 @@ function drawGraph(numberOfWorkers: number[], latencies: LatencyResult[], sameFr
                 label: 'Not Same Frame Messages',
                 data: sameFrameMessages.map(x => x.messagesNotInSameFrame),
                 yAxisID: 'y1'
-            }
+            },
         ]
     };
 
